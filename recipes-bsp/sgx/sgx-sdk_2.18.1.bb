@@ -20,8 +20,9 @@ SRC_URI += " \
 
 # Build environment variables
 EXTRA_OEMAKE += "OCAMLLIB='${STAGING_LIBDIR_NATIVE}/ocaml' sdk_install_pkg"
-CFLAGS:append = " -Wno-deprecated-declarations"
-CXXFLAGS:append = " -Wno-deprecated-declarations"
+INHIBIT_DEFAULT_CFLAGS = "1"
+CFLAGS:append = " -w"
+CXXFLAGS:append = " -w"
 
 ### install ###
 

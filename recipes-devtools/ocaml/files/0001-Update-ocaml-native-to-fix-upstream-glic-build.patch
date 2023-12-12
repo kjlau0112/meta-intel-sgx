@@ -1,0 +1,95 @@
+From 68e52932d29f9947c26e04057b631e7b31a05933 Mon Sep 17 00:00:00 2001
+From: kjlau0112 <karn.jye.lau@intel.com>
+Date: Mon, 11 Dec 2023 09:35:23 +0530
+Subject: [PATCH] Update ocaml-native to fix upstream glic build
+
+In Glibc 2.34 and later, SIGSTKSZ may not be a compile-time constant.
+SIGSTKSZ may not be a compile-time constant.
+It is no longer possible to statically allocate the alternate
+signal stack for the main thread.
+
+upstream-status:Backport
+
+Signed-off-by: kjlau0112 <karn.jye.lau@intel.com>
+---
+ runtime/caml/signals.h |  1 +
+ runtime/signals_byt.c  |  2 ++
+ runtime/signals_nat.c  | 30 +++++++++++++++++++++++-------
+ 3 files changed, 26 insertions(+), 7 deletions(-)
+
+diff --git a/runtime/caml/signals.h b/runtime/caml/signals.h
+index 46e65dd..2bb4ca6 100644
+--- a/runtime/caml/signals.h
++++ b/runtime/caml/signals.h
+@@ -46,6 +46,7 @@ void caml_record_signal(int signal_number);
+ void caml_process_pending_signals(void);
+ void caml_process_event(void);
+ int caml_set_signal_action(int signo, int action);
++CAMLexport int caml_setup_stack_overflow_detection(void) ;
+ 
+ CAMLextern void (*caml_enter_blocking_section_hook)(void);
+ CAMLextern void (*caml_leave_blocking_section_hook)(void);
+diff --git a/runtime/signals_byt.c b/runtime/signals_byt.c
+index bdbcf72..a25bc64 100644
+--- a/runtime/signals_byt.c
++++ b/runtime/signals_byt.c
+@@ -99,3 +99,5 @@ int caml_set_signal_action(int signo, int action)
+   else
+     return 0;
+ }
++
++CAMLexport int caml_setup_stack_overflow_detection(void) { return 0; }
+\ No newline at end of file
+diff --git a/runtime/signals_nat.c b/runtime/signals_nat.c
+index 29a5f49..a3ea159 100644
+--- a/runtime/signals_nat.c
++++ b/runtime/signals_nat.c
+@@ -182,7 +182,6 @@ DECLARE_SIGNAL_HANDLER(trap_handler)
+ #ifdef HAS_STACK_OVERFLOW_DETECTION
+ 
+ static char * system_stack_top;
+-static char sig_alt_stack[SIGSTKSZ];
+ 
+ #if defined(SYS_linux)
+ /* PR#4746: recent Linux kernels with support for stack randomization
+@@ -272,17 +271,34 @@ void caml_init_signals(void)
+ 
+   /* Stack overflow handling */
+ #ifdef HAS_STACK_OVERFLOW_DETECTION
++  if (caml_setup_stack_overflow_detection() != -1) 
+   {
+-    stack_t stk;
+     struct sigaction act;
+-    stk.ss_sp = sig_alt_stack;
+-    stk.ss_size = SIGSTKSZ;
+-    stk.ss_flags = 0;
+     SET_SIGACT(act, segv_handler);
+     act.sa_flags |= SA_ONSTACK | SA_NODEFER;
+     sigemptyset(&act.sa_mask);
+-    system_stack_top = (char *) &act;
+-    if (sigaltstack(&stk, NULL) == 0) { sigaction(SIGSEGV, &act, NULL); }
++    sigaction(SIGSEGV, &act, NULL);
+   }
+ #endif
+ }
++
++/* Allocate and select an alternate stack for handling signals,
++   especially SIGSEGV signals.
++   Each thread needs its own alternate stack.
++   The alternate stack used to be statically-allocated for the main thread,
++   but this is incompatible with Glibc 2.34 and newer, where SIGSTKSZ
++   may not be a compile-time constant (issue #10250). */
++
++CAMLexport int caml_setup_stack_overflow_detection(void)
++{
++#ifdef HAS_STACK_OVERFLOW_DETECTION
++  stack_t stk;
++  stk.ss_sp = malloc(SIGSTKSZ);
++  if (stk.ss_sp == NULL) return -1;
++  stk.ss_size = SIGSTKSZ;
++  stk.ss_flags = 0;
++  return sigaltstack(&stk, NULL);
++#else
++  return 0;
++#endif
++}
